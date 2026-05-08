@@ -6,11 +6,6 @@ import {
   pipeline,
   env,
 } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2";
-import { FFmpeg } from "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js";
-import {
-  fetchFile,
-  toBlobURL,
-} from "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js";
 
 // transformers.js setup — fetch models from HF hub, cache in browser.
 env.allowLocalModels = false;
@@ -44,7 +39,6 @@ const copyTextBtn = $("copyText");
 
 // ---- state ----
 let selectedFile = null;
-let ffmpeg = null;
 let transcriber = null;
 let transcriberKey = null; // model + quant + device combo currently loaded
 let cancelRequested = false;
@@ -148,76 +142,45 @@ dropzone.addEventListener("drop", (e) => {
   }
 });
 
-// ---- ffmpeg ----
-async function ensureFFmpeg() {
-  if (ffmpeg && ffmpeg.loaded) return ffmpeg;
-  setProgress(2, "Đang tải ffmpeg.wasm…");
-  ffmpeg = new FFmpeg();
-  ffmpeg.on("log", ({ message }) => {
-    if (message) log(`ffmpeg: ${message}`);
-  });
-  ffmpeg.on("progress", ({ progress }) => {
-    if (Number.isFinite(progress)) {
-      const pct = Math.max(0, Math.min(1, progress)) * 100;
-      setProgress(5 + pct * 0.25, `Tách audio… ${pct.toFixed(0)}%`);
-    }
-  });
-  const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd";
-  await ffmpeg.load({
-    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
-    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
-  });
-  log("ffmpeg.wasm đã sẵn sàng.");
-  return ffmpeg;
-}
-
+// ---- audio extraction ----
+// Use the browser's native AudioContext.decodeAudioData to read the audio
+// track from any supported container (MP4, WEBM, MP3, WAV, M4A, OGG, …)
+// then resample to 16 kHz mono via OfflineAudioContext.
 async function extractAudio(file) {
-  const ff = await ensureFFmpeg();
-  const inputName = "input" + (file.name.match(/\.[^/.]+$/)?.[0] || ".bin");
-  const outputName = "audio.wav";
-  // Whisper expects 16k mono PCM
-  await ff.writeFile(inputName, await fetchFile(file));
-  setProgress(6, "Đang tách audio (16kHz mono)…");
-  await ff.exec([
-    "-i",
-    inputName,
-    "-vn",
-    "-ac",
-    "1",
-    "-ar",
-    "16000",
-    "-f",
-    "wav",
-    outputName,
-  ]);
-  const data = await ff.readFile(outputName);
-  try {
-    await ff.deleteFile(inputName);
-    await ff.deleteFile(outputName);
-  } catch {}
-  return new Blob([data.buffer], { type: "audio/wav" });
-}
+  setProgress(2, "Đang đọc file…");
+  const arrayBuffer = await file.arrayBuffer();
+  log(`Đọc xong ${fmtBytes(arrayBuffer.byteLength)}.`);
 
-async function decodeWavToFloat32(blob) {
-  // decode 16 kHz mono WAV into Float32 PCM for transformers.js.
-  const arr = await blob.arrayBuffer();
-  const ctx = new (window.AudioContext || window.webkitAudioContext)({
-    sampleRate: 16000,
-  });
-  const audio = await ctx.decodeAudioData(arr.slice(0));
-  // Down-mix to mono if needed (ffmpeg already gives mono, but be safe)
-  let pcm;
-  if (audio.numberOfChannels === 1) {
-    pcm = audio.getChannelData(0);
-  } else {
-    const len = audio.length;
-    pcm = new Float32Array(len);
-    for (let ch = 0; ch < audio.numberOfChannels; ch++) {
-      const data = audio.getChannelData(ch);
-      for (let i = 0; i < len; i++) pcm[i] += data[i] / audio.numberOfChannels;
-    }
+  setProgress(8, "Đang giải mã audio…");
+  const tempCtx = new (window.AudioContext || window.webkitAudioContext)();
+  let decoded;
+  try {
+    decoded = await tempCtx.decodeAudioData(arrayBuffer.slice(0));
+  } catch (err) {
+    throw new Error(
+      `Trình duyệt không giải mã được audio từ file này (${err.message}). ` +
+        "Thử dùng file MP4/WEBM/MP3/WAV/M4A."
+    );
+  } finally {
+    tempCtx.close().catch(() => {});
   }
-  ctx.close().catch(() => {});
+  log(
+    `Audio gốc: ${decoded.duration.toFixed(1)}s, ` +
+      `${decoded.sampleRate} Hz, ${decoded.numberOfChannels} ch.`
+  );
+
+  // Resample to 16 kHz mono using OfflineAudioContext.
+  const TARGET_RATE = 16000;
+  setProgress(18, "Đang resample → 16 kHz mono…");
+  const offlineLen = Math.ceil(decoded.duration * TARGET_RATE);
+  const offline = new OfflineAudioContext(1, offlineLen, TARGET_RATE);
+  const src = offline.createBufferSource();
+  src.buffer = decoded;
+  src.connect(offline.destination);
+  src.start(0);
+  const rendered = await offline.startRendering();
+  const pcm = rendered.getChannelData(0);
+  log(`PCM samples: ${pcm.length} (~${(pcm.length / TARGET_RATE).toFixed(1)}s)`);
   return pcm;
 }
 
@@ -327,11 +290,7 @@ runBtn.addEventListener("click", async () => {
 
   try {
     log(`File: ${selectedFile.name} (${fmtBytes(selectedFile.size)})`);
-    const audioBlob = await extractAudio(selectedFile);
-    log(`Audio đã tách: ${fmtBytes(audioBlob.size)}`);
-    setProgress(32, "Đang giải mã audio…");
-    const pcm = await decodeWavToFloat32(audioBlob);
-    log(`PCM samples: ${pcm.length} (~${(pcm.length / 16000).toFixed(1)}s)`);
+    const pcm = await extractAudio(selectedFile);
 
     const result = await transcribe(pcm);
     const text = (result?.text || "").trim();

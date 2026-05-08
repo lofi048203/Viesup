@@ -122,22 +122,48 @@ clearFile.addEventListener("click", (e) => {
   setFile(null);
 });
 
-["dragenter", "dragover"].forEach((ev) =>
-  dropzone.addEventListener(ev, (e) => {
-    e.preventDefault();
-    dropzone.classList.add("drag");
-  })
-);
-["dragleave", "drop"].forEach((ev) =>
-  dropzone.addEventListener(ev, (e) => {
-    e.preventDefault();
+// Drag-and-drop. We attach handlers to the WHOLE WINDOW (not just the
+// dropzone) so that:
+//  1. Files dropped anywhere on the page are accepted (forgiving UX).
+//  2. preventDefault on every drag/drop event stops the browser's default
+//     "navigate to the dragged file" behavior, which otherwise replaces
+//     the page when a user misses the dropzone.
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => {
+  if (!e.dataTransfer?.types?.includes("Files")) return;
+  e.preventDefault();
+  dragDepth++;
+  document.body.classList.add("drag");
+  dropzone.classList.add("drag");
+});
+window.addEventListener("dragover", (e) => {
+  if (!e.dataTransfer?.types?.includes("Files")) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+});
+window.addEventListener("dragleave", (e) => {
+  if (!e.dataTransfer?.types?.includes("Files")) return;
+  e.preventDefault();
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) {
+    document.body.classList.remove("drag");
     dropzone.classList.remove("drag");
-  })
-);
-dropzone.addEventListener("drop", (e) => {
-  const f = e.dataTransfer?.files?.[0];
+  }
+});
+window.addEventListener("drop", (e) => {
+  if (!e.dataTransfer?.types?.includes("Files")) return;
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove("drag");
+  dropzone.classList.remove("drag");
+  const f = e.dataTransfer.files?.[0];
   if (f) {
-    fileInput.files = e.dataTransfer.files;
+    try {
+      fileInput.files = e.dataTransfer.files;
+    } catch {
+      // Some browsers reject programmatic FileList assignment; selectedFile
+      // alone is enough for the rest of the pipeline.
+    }
     setFile(f);
   }
 });

@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Viesup — Trích xuất phụ đề video đa ngôn ngữ</title>
+    <meta
+      name="description"
+      content="Viesup: Tải video lên trình duyệt, tự động chuyển âm thanh sang văn bản (Tiếng Việt, English, 中文, 日本語, 한국어, ...) và xuất ra .txt / .srt. Chạy hoàn toàn trên máy bạn — không cần cài đặt, không cần upload lên server."
+    />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='52' font-size='52'%3E%F0%9F%8E%AC%3C/text%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">🎬</span>
+        <div>
+          <h1>Viesup</h1>
+          <p class="tagline">Video → văn bản, đa ngôn ngữ, chạy ngay trong trình duyệt</p>
+        </div>
+      </div>
+      <a class="ghlink" href="https://github.com/lofi048203/Viesup" target="_blank" rel="noopener">GitHub ↗</a>
+    </header>
+
+    <main class="container">
+      <section class="card">
+        <h2>1. Chọn video</h2>
+        <label id="dropzone" class="dropzone" for="fileInput">
+          <input id="fileInput" type="file" accept="video/*,audio/*" hidden />
+          <div class="dz-inner">
+            <div class="dz-icon">📁</div>
+            <div class="dz-text">
+              <strong>Kéo thả video / audio vào đây</strong>
+              <span>hoặc bấm để chọn từ máy. Hỗ trợ MP4, MOV, MKV, WEBM, MP3, WAV, M4A...</span>
+            </div>
+          </div>
+          <div id="filePreview" class="file-preview" hidden>
+            <div class="fp-name" id="fpName"></div>
+            <div class="fp-meta" id="fpMeta"></div>
+            <button class="btn ghost small" id="clearFile" type="button">Xoá</button>
+          </div>
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>2. Cấu hình</h2>
+        <div class="grid">
+          <div class="field">
+            <label for="lang">Ngôn ngữ</label>
+            <select id="lang">
+              <option value="auto">Tự động phát hiện</option>
+              <option value="vi" selected>Tiếng Việt</option>
+              <option value="en">English</option>
+              <option value="zh">中文 (Chinese)</option>
+              <option value="ja">日本語 (Japanese)</option>
+              <option value="ko">한국어 (Korean)</option>
+              <option value="fr">Français</option>
+              <option value="es">Español</option>
+              <option value="de">Deutsch</option>
+              <option value="ru">Русский</option>
+              <option value="th">ภาษาไทย (Thai)</option>
+              <option value="id">Bahasa Indonesia</option>
+              <option value="ms">Bahasa Melayu</option>
+              <option value="hi">हिन्दी (Hindi)</option>
+              <option value="ar">العربية (Arabic)</option>
+              <option value="pt">Português</option>
+              <option value="it">Italiano</option>
+              <option value="nl">Nederlands</option>
+              <option value="tr">Türkçe</option>
+              <option value="pl">Polski</option>
+              <option value="uk">Українська</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="task">Tác vụ</label>
+            <select id="task">
+              <option value="transcribe" selected>Chép lại nguyên gốc (transcribe)</option>
+              <option value="translate">Dịch sang tiếng Anh (translate)</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="model">Mô hình Whisper</label>
+            <select id="model">
+              <option value="Xenova/whisper-tiny">tiny — siêu nhanh, ~40MB</option>
+              <option value="Xenova/whisper-base" selected>base — cân bằng, ~80MB</option>
+              <option value="Xenova/whisper-small">small — chính xác hơn, ~250MB</option>
+            </select>
+            <small class="hint">Lần đầu chạy sẽ tải mô hình (lưu cache cho lần sau).</small>
+          </div>
+
+          <div class="field">
+            <label for="quant">Lượng tử hoá</label>
+            <select id="quant">
+              <option value="q8" selected>q8 (nhỏ, nhanh)</option>
+              <option value="fp32">fp32 (chính xác hơn, lớn hơn)</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label class="check">
+              <input type="checkbox" id="timestamps" checked />
+              <span>Kèm timestamp (cho phép xuất .srt)</span>
+            </label>
+          </div>
+
+          <div class="field">
+            <label class="check">
+              <input type="checkbox" id="useGpu" checked />
+              <span>Dùng WebGPU nếu có (nhanh hơn)</span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>3. Bắt đầu</h2>
+        <div class="actions">
+          <button class="btn primary" id="runBtn" disabled>▶ Trích xuất văn bản</button>
+          <button class="btn ghost" id="cancelBtn" disabled>■ Huỷ</button>
+        </div>
+
+        <div class="progress-wrap" id="progressWrap" hidden>
+          <div class="progress">
+            <div id="progressBar" class="progress-bar"></div>
+          </div>
+          <div id="progressLabel" class="progress-label">Đang chuẩn bị…</div>
+        </div>
+
+        <pre id="log" class="log" hidden></pre>
+      </section>
+
+      <section class="card output" id="outputCard" hidden>
+        <h2>4. Kết quả</h2>
+        <div class="actions">
+          <button class="btn primary" id="downloadTxt">⬇ Tải .txt</button>
+          <button class="btn primary" id="downloadSrt">⬇ Tải .srt</button>
+          <button class="btn ghost" id="copyText">Sao chép</button>
+        </div>
+        <textarea id="outputText" rows="14" spellcheck="false" readonly></textarea>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        Viesup chạy 100% trên trình duyệt nhờ
+        <a href="https://huggingface.co/docs/transformers.js" target="_blank" rel="noopener">transformers.js</a>
+        và
+        <a href="https://ffmpegwasm.netlify.app/" target="_blank" rel="noopener">ffmpeg.wasm</a>.
+        Video của bạn KHÔNG được upload lên bất kỳ server nào.
+      </p>
+    </footer>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
